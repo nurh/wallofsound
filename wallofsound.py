@@ -1,6 +1,6 @@
-#!/usr/bin/python
+#!/usr/local/src/virtualenv/wall/bin/python
 #
-#   Copyright 2016 Nur Hussein (hussein@unixcat.org)
+#   Copyright 2016-2021 Nur Hussein (hussein@unixcat.org)
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -14,81 +14,92 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+from rake_nltk import Rake
+from nltk.corpus import stopwords
+from flickrapi import FlickrAPI
+import requests
+import validators
+import lyricsgenius
+import random
 import re
 import sys
-import random
+import os
 import subprocess
-import json
-from PyLyrics import *
-from alchemyapi import AlchemyAPI
-from PyLyrics import *
-import requests.packages.urllib3
-requests.packages.urllib3.disable_warnings()
-from flickrapi import FlickrAPI
 
-FLICKR_PUBLIC = 'YOURKEYSTRING'
-FLICKR_SECRET = 'YOURSECRET'
+# Keys
+
+FLICKR_PUBLIC = INSERT_YOUR_KEY_HERE
+FLICKR_SECRET = INSERT_YOUR_KEY_HERE
+GENIUS_ACCESS_TOKEN = INSERT_YOUR_KEY_HERE
+
+# Tunables
+
+MAX_NGRAM_SIZE = 2
+MIN_WIDTH = 1024
+MIN_HEIGHT = 900
+MAX_PHRASES = 3
+
+# Data directory
+
+HOMEDIR = os.getenv('HOME')
+DATADIR = HOMEDIR + "/.wallofsound"
+
+print(DATADIR)
+
+# Init Rake
+
+r = Rake(max_length=MAX_NGRAM_SIZE)
+
 
 # Create Flickr object
 
 flickr = FlickrAPI(FLICKR_PUBLIC, FLICKR_SECRET, format='parsed-json')
 extras='url_o'
 
-# Create the AlchemyAPI object
-alchemyapi = AlchemyAPI()
+# Create Genius object and turn off status messages
 
-def getFlickrPic(keyword):
-	choice = random.randint(0,5)
+genius = lyricsgenius.Genius(GENIUS_ACCESS_TOKEN)
+genius.verbose = False
 
-	wallcandidate = flickr.photos.search(text=keyword, per_page=5, extras=extras, sort='interestingness-desc', license='2,3,4,5,6,7')
-	photos = wallcandidate['photos']
-		
-	pick = photos['photo'][choice]
-
-	wides = {k:v for k,v in pick.iteritems() if ('height_o' in k or 'width_o' in k) }
-	
-	if int(wides['width_o']) >= 1280 and int(wides['height_o']) >= 900:
-		return pick['url_o']
-	else:
-		return "None"
-
-def getKeywords(lyrics):
-	words = []
-
-	response = alchemyapi.keywords('text', lyrics, {'sentiment': 1})
-
-	if response['status'] == 'OK':
-		for keyword in response['keywords']:
-			words.append(keyword['text'].encode('utf-8'))
-	else:
-		return nil
-
-	return words
-
-def getEntities(lyrics):
-	entities = []
-
-	response = alchemyapi.entities('text', lyrics, {'sentiment': 1})
-
-	if response['status'] == 'OK':
-		for entity in response['entities']:
-			entities.append(entity['text'].encode('utf-8'))
-
-	else:
-		return nil
-
-	return entities
-
-def getWebLyrics(artist, song_title):
+def filterForExif(id):
 	try:
-		lyrics=(PyLyrics.getLyrics(artist,song_title))
-		if lyrics.find("data-image-key")<0:
-			return lyrics
+		getexif = flickr.photos.getExif(photo_id=id)
+		if getexif:
+			if getexif['photo']['camera']:
+				return True
+			else:
+				return False
 		else:
-			return song_title
+			return False
+	except:
+		return False
 
-	except ValueError:
-		return song_title
+def getFlickrPics(keyword):
+
+	photo_set = []
+
+	wallcandidate = flickr.photos.search(text=keyword, content_type=1, per_page=10, extras=extras, sort='interestingness-desc', license='2,3,4,5,6,7')
+	result = wallcandidate['photos']
+
+	photos = result['photo']
+
+#	print(photos)
+
+	for item in photos:
+		if item['width_o'] >= MIN_WIDTH and item['height_o'] >= MIN_HEIGHT:
+			if filterForExif(item['id']):
+				photo_set.append(item['url_o'])
+
+	return photo_set
+
+def getLyrics(song_artist, song_title):
+	song = genius.search_song(title=song_title,artist=song_artist)
+
+	if song is not None:
+		x = song.lyrics
+		return x.replace("EmbedShare URLCopyEmbedCopy", "")
+	else:
+		return None
 
 def buildSearchString(song_title, song_keywords):
 	x = random.randint(0,100)
@@ -98,6 +109,18 @@ def buildSearchString(song_title, song_keywords):
 	else:
 		flickr_search_string = random.choice(song_keywords) 
 		return flickr_search_string
+
+def getPicFromWeb(url):
+	if(validators.url(url)):
+		r = requests.get(url, allow_redirects=True)
+		open(DATADIR+"/"+os.path.basename(url), 'wb').write(r.content)
+	else:
+		print("Malformed URL. No file downloaded.")
+
+
+# Create the data dir if it doesn't exist
+if not os.path.exists(DATADIR):
+	os.makedirs(DATADIR)
 
 if len(sys.argv)<2:
 	sys.exit(1)
@@ -112,13 +135,37 @@ artist, song_title = song.split(' - ')
 
 print(song)
 print("---")
-song_lyrics = getWebLyrics(artist, song_title)
-print(song_lyrics)
+song_lyrics = getLyrics(artist, song_title)
 
-song_keywords = getKeywords(song_lyrics) + getEntities(song_lyrics)
-search_string = buildSearchString(song_title, song_keywords)
+if song_lyrics:
+	r.extract_keywords_from_text(song_lyrics)
 
-print("---")
-print("Using search string:" + search_string)
-subprocess.call(['setwalluri.sh', getFlickrPic(search_string)])
-subprocess.call(['setwall.sh'])
+	phrases_list_raw = r.get_ranked_phrases()
+
+	phrases_list=[s for s in phrases_list_raw if not s.startswith('verse')]
+
+	
+	if phrases_list:
+		if len(phrases_list) > MAX_PHRASES:
+			phrases_list = phrases_list[:MAX_PHRASES]
+	
+			print("Candidate phrases to search for:")
+			print(phrases_list)
+		search_term = random.choice(phrases_list)
+		print("---")
+	else:
+		search_term = song_title
+else:
+	search_term = song_title
+
+
+print("Searching Flickr for search term "+search_term)
+pics = getFlickrPics(search_term)
+
+if pics:
+	selected_pic = random.choice(pics)
+	print(selected_pic)
+	getPicFromWeb(selected_pic)
+	subprocess.call(["./setwall.sh", "file://"+DATADIR+"/"+os.path.basename(selected_pic)])
+else:
+	print("No picture found.")
