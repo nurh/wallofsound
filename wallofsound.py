@@ -44,12 +44,9 @@ MAX_PHRASES = 3
 HOMEDIR = os.getenv('HOME')
 DATADIR = HOMEDIR + "/.wallofsound"
 
-print(DATADIR)
-
 # Init Rake
 
 r = Rake(max_length=MAX_NGRAM_SIZE)
-
 
 # Create Flickr object
 
@@ -118,6 +115,49 @@ def getPicFromWeb(url):
 		print("Malformed URL. No file downloaded.")
 
 
+def getWall(song):
+	song = re.sub(r'\(.*?\)', "", song)
+	song = re.sub(r'\[.*?\]', "", song)
+	artist, song_title = song.split(' - ')
+
+	print(song)
+	print("---")
+	song_lyrics = getLyrics(artist, song_title)
+
+	if song_lyrics:
+		r.extract_keywords_from_text(song_lyrics)
+
+		phrases_list_raw = r.get_ranked_phrases()
+
+		phrases_list=[s for s in phrases_list_raw if not s.startswith('verse')]
+
+	
+		if phrases_list:
+			if len(phrases_list) > MAX_PHRASES:
+				phrases_list = phrases_list[:MAX_PHRASES]
+	
+			print("Candidate phrases to search for:")
+			print(phrases_list)
+			search_term = random.choice(phrases_list)
+			print("---")
+		else:
+			search_term = song_title
+	else:
+		search_term = song_title
+
+
+	print("Searching Flickr for search term "+search_term)
+	pics = getFlickrPics(search_term)
+
+	if pics:
+		selected_pic = random.choice(pics)
+		print(selected_pic)
+		getPicFromWeb(selected_pic)
+		subprocess.call(["./setwall.sh", "file://"+DATADIR+"/"+os.path.basename(selected_pic)])
+	else:
+		print("No picture found.")
+
+
 # Create the data dir if it doesn't exist
 if not os.path.exists(DATADIR):
 	os.makedirs(DATADIR)
@@ -126,46 +166,5 @@ if len(sys.argv)<2:
 	sys.exit(1)
 else:
 	song = ' '.join([str(foo) for foo in sys.argv[1:]])
+	getWall(song)
 
-# removes things in square brackets and parenthesis
-
-song = re.sub(r'\(.*?\)', "", song)
-song = re.sub(r'\[.*?\]', "", song)
-artist, song_title = song.split(' - ')
-
-print(song)
-print("---")
-song_lyrics = getLyrics(artist, song_title)
-
-if song_lyrics:
-	r.extract_keywords_from_text(song_lyrics)
-
-	phrases_list_raw = r.get_ranked_phrases()
-
-	phrases_list=[s for s in phrases_list_raw if not s.startswith('verse')]
-
-	
-	if phrases_list:
-		if len(phrases_list) > MAX_PHRASES:
-			phrases_list = phrases_list[:MAX_PHRASES]
-	
-			print("Candidate phrases to search for:")
-			print(phrases_list)
-		search_term = random.choice(phrases_list)
-		print("---")
-	else:
-		search_term = song_title
-else:
-	search_term = song_title
-
-
-print("Searching Flickr for search term "+search_term)
-pics = getFlickrPics(search_term)
-
-if pics:
-	selected_pic = random.choice(pics)
-	print(selected_pic)
-	getPicFromWeb(selected_pic)
-	subprocess.call(["./setwall.sh", "file://"+DATADIR+"/"+os.path.basename(selected_pic)])
-else:
-	print("No picture found.")
