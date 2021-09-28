@@ -1,4 +1,4 @@
-#!/usr/local/src/virtualenv/wall/bin/python
+#   Wall of Sound : Music-based Desktop Picture Recommender
 #
 #   Copyright 2016-2021 Nur Hussein (hussein@unixcat.org)
 #
@@ -25,24 +25,16 @@ import re
 import sys
 import os
 import subprocess
-
-# Keys
-
-FLICKR_PUBLIC = INSERT_YOUR_KEY_HERE
-FLICKR_SECRET = INSERT_YOUR_KEY_HERE
-GENIUS_ACCESS_TOKEN = INSERT_YOUR_KEY_HERE
+import flask
+from flask import request, jsonify
+from wallkeys import *
 
 # Tunables
 
-MAX_NGRAM_SIZE = 2
+MAX_NGRAM_SIZE = 3
 MIN_WIDTH = 1024
 MIN_HEIGHT = 900
-MAX_PHRASES = 3
-
-# Data directory
-
-HOMEDIR = os.getenv('HOME')
-DATADIR = HOMEDIR + "/.wallofsound"
+MAX_PHRASES = 5
 
 # Init Rake
 
@@ -80,21 +72,24 @@ def getFlickrPics(keyword):
 
 	photos = result['photo']
 
-#	print(photos)
-
 	for item in photos:
-		if item['width_o'] >= MIN_WIDTH and item['height_o'] >= MIN_HEIGHT:
+		if item['width_o'] >= MIN_WIDTH and item['height_o'] >= MIN_HEIGHT and item['width_o'] > item['height_o']:
 			if filterForExif(item['id']):
 				photo_set.append(item['url_o'])
 
 	return photo_set
 
+# We add periods to the end of every song line as to not confuse the phrase extractor.
+
 def getLyrics(song_artist, song_title):
 	song = genius.search_song(title=song_title,artist=song_artist)
 
 	if song is not None:
-		x = song.lyrics
-		return x.replace("EmbedShare URLCopyEmbedCopy", "")
+		raw_lyrics = song.lyrics
+		lyrics_clean = raw_lyrics.replace("EmbedShare URLCopyEmbedCopy", "")
+		print(lyrics_clean)
+		lyrics_periods = lyrics_clean.replace("\n", ".\n")
+		return lyrics_periods
 	else:
 		return None
 
@@ -107,21 +102,8 @@ def buildSearchString(song_title, song_keywords):
 		flickr_search_string = random.choice(song_keywords) 
 		return flickr_search_string
 
-def getPicFromWeb(url):
-	if(validators.url(url)):
-		r = requests.get(url, allow_redirects=True)
-		open(DATADIR+"/"+os.path.basename(url), 'wb').write(r.content)
-	else:
-		print("Malformed URL. No file downloaded.")
+def getWall(artist, song_title):
 
-
-def getWall(song):
-	song = re.sub(r'\(.*?\)', "", song)
-	song = re.sub(r'\[.*?\]', "", song)
-	artist, song_title = song.split(' - ')
-
-	print(song)
-	print("---")
 	song_lyrics = getLyrics(artist, song_title)
 
 	if song_lyrics:
@@ -149,22 +131,37 @@ def getWall(song):
 	print("Searching Flickr for search term "+search_term)
 	pics = getFlickrPics(search_term)
 
+	print(pics)
+
 	if pics:
 		selected_pic = random.choice(pics)
-		print(selected_pic)
-		getPicFromWeb(selected_pic)
-		subprocess.call(["./setwall.sh", "file://"+DATADIR+"/"+os.path.basename(selected_pic)])
+		print("Returning selected pic: "+selected_pic)
+		return selected_pic
 	else:
-		print("No picture found.")
+		return None
+
+app = flask.Flask(__name__)
+app.config["DEBUG"] = True
+
+@app.route('/', methods=['GET'])
+def home():
+	return "<h1>Wall of Sound Server</h1><p>Welcome to Wall of Sound! Send a JSON-formatted request with a song and get a picture!</p>"
 
 
-# Create the data dir if it doesn't exist
-if not os.path.exists(DATADIR):
-	os.makedirs(DATADIR)
+@app.route('/api/v1/wallpapers', methods=['GET'])
+def api_id():
+	if 'song' in request.args and 'artist' in request.args:
+		print (request.args)
+		song_name = str(request.args['song'])
+		song_artist = str(request.args['artist'])
+	else:
+		return "Error: Please provide both artist and song fields."
 
-if len(sys.argv)<2:
-	sys.exit(1)
-else:
-	song = ' '.join([str(foo) for foo in sys.argv[1:]])
-	getWall(song)
+	results=getWall(song_artist, song_name)
+	
+	if results:
+		return results
+	else:
+		return "Error: Nothing found", 400
 
+app.run()
